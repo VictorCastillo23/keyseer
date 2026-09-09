@@ -1,4 +1,4 @@
-# MOG3 — Estado del trabajo, limitaciones y agenda
+# KeySeer — Estado del trabajo, limitaciones y agenda
 
 **Versión:** 0.1.0 · **Fecha:** 8 de septiembre de 2026
 **Propósito:** documento interno de estado. Registra qué está demostrado, qué
@@ -196,15 +196,19 @@ el estado actual y un manuscrito enviable.
 
 ## 6. Riesgos para publicación
 
-**Riesgo alto — novedad no verificada.** No se ha hecho revisión de
-literatura. Es posible que la lectura de la dinámica de nacimiento/muerte de
-componentes ya exista. Búsquedas pendientes: *component birth-death dynamics
-background subtraction*, *mixture model novelty persistence*, *Bayesian
-surprise video summarization*, *GMM component lifetime video*. **Debe hacerse
-antes de invertir más esfuerzo de ingeniería.** Si el resultado ya existe, la
-agenda cambia por completo.
+**RESUELTO — novedad refutada en su formulación original.** La revisión se
+hizo (ver `LITERATURA.md`). El mecanismo central **no es novedoso**: la
+persistencia de componentes como criterio está en Stauffer-Grimson (1999), y
+la lectura de edad/actividad de modos en un modelo multimodal para decidir
+estacionariedad está patentada (US8305440, Canon). La comunidad de detección
+de objetos abandonados resuelve el mismo problema con modelos de fondo duales.
 
-**Riesgo alto — posicionamiento.** El nombre "MOG3" promete un modelo de
+Lo que sobrevive es mucho más estrecho: la regla analítica de latencia, el
+argumento de modelo-único frente a modelo-dual, y el hueco de aplicación en
+resumen de vídeo. **La agenda de la §7 debe leerse a la luz de
+`LITERATURA.md` §4, que la modifica.**
+
+**Riesgo alto — posicionamiento.** El nombre original (previo a KeySeer) prometía un modelo de
 fondo nuevo. La contribución real está en la *lectura* del modelo; las
 ecuaciones de actualización son de Zivkovic con una corrección menor de
 varianza. Recomendación: renombrar a algo descriptivo del mecanismo
@@ -223,10 +227,11 @@ de F1 estándar.
 
 Ordenada por relación valor/riesgo. Los pasos 0 y 1 son bloqueantes.
 
-### Paso 0 — Revisión de literatura (bloqueante, sin código)
-Establecer si la contribución es nueva antes de seguir construyendo.
-**Criterio de decisión:** si existe trabajo previo equivalente, detener el
-desarrollo y replantear el ángulo.
+### Paso 0 — Revisión de literatura — **COMPLETADO, resultado negativo**
+Ver `LITERATURA.md`. Existe trabajo previo equivalente. Se activó el criterio
+de detención: **replantear el ángulo antes de continuar con la ingeniería.**
+Nuevo baseline obligatorio en el Paso 5: modelo de fondo dual (fast/slow),
+que es el competidor directo real y no estaba contemplado.
 
 ### Paso 1 — Corregir la latencia con la regla analítica
 Fijar $L \geq t_{\text{muerte}} = \ln(c_T/(\alpha+c_T))/\ln(1-\alpha)$ en vez
@@ -303,3 +308,118 @@ La primera versión de la métrica también parecía funcionar hasta que se
 introdujeron señuelos deliberados en el vídeo de evaluación. Recomendación
 operativa: **todo test sintético nuevo debe incluir señuelos diseñados para
 engañar a la métrica propuesta**, no solo ejemplos que la favorezcan.
+
+
+---
+
+## 10. Modulo A vs Modulo B — pausa de publicacion, foco en herramienta personal (turno 8)
+
+**Decision del usuario:** pausar la publicacion, separar explicitamente
+**Modulo A** (deteccion de persistencia) de **Modulo B** (algoritmo de
+keyframes), y optimizar por la mejor herramienta con la menor complejidad
+para uso personal, dejando de lado la novedad.
+
+### 10.1 Modulo A: dos backends comparados con evidencia, no por argumento
+
+| | GMM NumPy (`core.py`) | cv2 MOG2 + edad de blob (`blobtrack.py`) |
+|---|---|---|
+| recall eventos reales (submodular, 8 semillas) | 1.00 ± 0.00 | 1.00 ± 0.00 |
+| señuelos capturados | 1.00 ± 0.00 | **0.00 ± 0.00** |
+| velocidad | ~17 fps (180×320) | **~345-455 fps** |
+| memoria de estado | 360 KB fijo (O(H·W)) | **~200 B-2 KB (O(n objetos))** |
+| lineas de codigo del nucleo | ~300 | **~150** |
+
+**Decision: `blobtrack` es el backend por defecto.** Gana o empata en todos
+los ejes medidos. `core.py` (GMM) se conserva como backend alternativo
+(`backend="gmm"`) para quien necesite las señales fina (Ψ, KL, sorpresa)
+que el blob tracker no expone -- no se elimina, no se recomienda por
+defecto.
+
+### 10.2 Un fallo critico encontrado y corregido: el mismo problema que
+motivo todo el proyecto, resurgiendo en el reemplazo "simple"
+
+Al probar `blobtrack` con un objeto estatico AISLADO (sin eventos previos
+en el video), el resultado fue **0 keyframes, score maximo 0.0** -- fallo
+total. Se rastreo el mecanismo: cv2 MOG2 usa por defecto una tasa de
+aprendizaje AUTOMATICA que es mucho mas rapida al principio del video
+(~1/frames_vistos) que su tasa nominal (1/history). Un objeto que aparece
+temprano en el video (frame 30) se absorbe al fondo en ~9 frames; el MISMO
+objeto apareciendo tarde (frame 280, con 250+ frames de "calentamiento"
+previo) sobrevive >50 frames. Verificado directamente:
+
+| calentamiento previo | edad maxima alcanzada por el track |
+|---|---|
+| 0 frames | 7 (muere antes del umbral minimo) |
+| 250 frames | 55 |
+
+Esto es, literalmente, el mismo problema que origino la busqueda de
+Ψ/modelo dual en primer lugar (MOG2 solo no detecta persistencia) --
+resurgiendo dentro del backend que se proponia como reemplazo simple,
+oculto porque la suite de señuelos usada para validarlo (`PROTOCOLO.md`)
+tenia sus eventos reales bien entrados en el video, con calentamiento de
+sobra.
+
+**Correccion:** forzar una tasa de aprendizaje EXPLICITA
+(`learningRate=1/history` en `back_sub.apply()`) en vez de la automatica.
+Verificado: con la tasa fija, calentamiento=0 y calentamiento=250 alcanzan
+la MISMA edad maxima (55). Se revalido toda la suite de 8 semillas tras la
+correccion: recall y rechazo de señuelos identicos a los reportados en la
+tabla de 10.1. Implementado en `blobtrack.py`.
+
+**Leccion:** un backend "mas simple" hereda las trampas de la libreria que
+envuelve si no se audita con el mismo rigor que el codigo propio. La
+prueba que lo destapo fue deliberadamente distinta a la suite de
+validacion existente (objeto aislado, sin eventos previos) -- las
+suites de prueba existentes no lo habrian detectado nunca.
+
+### 10.3 Falsa alarma investigada y descartada: relleno de presupuesto
+
+Se sospechaba que la seleccion submodular rellenaba el presupuesto con
+keyframes redundantes cuando el video tiene menos eventos genuinos que
+`budget` (observado: 3 eventos reales, budget=6, 2-3 keyframes por
+evento). Investigacion:
+
+1. La metrica de redundancia usada (`pairwise_redundancy`) resulto estar
+   rota (bug propio, reincidente: el mismo problema de histograma
+   dominado por fondo ya corregido en el turno 1, reintroducido aqui).
+   Corregida con mascara de primer plano independiente por frame.
+2. Con la metrica corregida, se confirmo visualmente que los keyframes
+   señalados como "redundantes" en realidad mostraban contenido
+   significativamente distinto (mismo objeto, posiciones distintas) -- la
+   alarma original era un artefacto de medicion, no un defecto real.
+3. Se probo directamente si el algoritmo, SIN ningun criterio de parada
+   adicional, rellena el presupuesto para un evento VERDADERAMENTE
+   estatico: no lo hace. Con budget=1,3,6,10 siempre devuelve exactamente
+   1 keyframe, porque la cobertura del objetivo submodular satura de
+   forma natural. Codificado como test de regresion
+   (`test_static_object_no_padding_regardless_of_budget`).
+4. Se implemento un criterio de parada adicional (`min_gain_ratio`) de
+   todas formas, y se encontro que activarlo INTRODUCE un problema nuevo:
+   descarta eventos reales genuinamente distintos pero de menor
+   intensidad (verificado, se pierde un evento real completo con
+   ratio=0.05). Se deja como parametro opcional, desactivado por defecto,
+   con esta advertencia documentada en el codigo.
+
+**Conclusion: no hacia falta arreglar nada.** El algoritmo base ya se
+comportaba correctamente; el problema estaba en como se media.
+
+### 10.4 Entregable: API unica para uso personal
+
+`keyseer/keyframes.py` -- `extract_keyframes(video_path, budget=8,
+out_dir=...)`: una sola llamada, backend `blobtrack` por defecto, guarda
+los .jpg elegidos en disco. Probado extremo a extremo en `vtest.avi`
+(video real): 8 keyframes, 2.36s de procesamiento, archivos verificados en
+disco.
+
+### 10.5 Lo que sigue pendiente
+
+- El punto ciego del filtro de area maxima (`max_area_frac`, rechaza
+  objetos reales que cubran >50% del frame) sigue sin resolver mas alla de
+  dejarlo configurable -- ver conversacion, turno 7.
+- El rechazo de ruido denso del backend GMM (Paso 2, seccion 7 de este
+  documento) nunca se completo; con el cambio de backend por defecto a
+  `blobtrack` (que SI rechaza el ruido denso de la suite, seccion 10.1)
+  esto pierde prioridad para el uso personal, pero sigue abierto si se
+  retoma `backend="gmm"`.
+- No se ha probado el pipeline completo con video real filmado a mano
+  (camara no fija) -- todos los backends asumen camara estatica.

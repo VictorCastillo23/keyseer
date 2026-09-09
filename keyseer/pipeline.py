@@ -1,20 +1,20 @@
 """
-mog3.pipeline
-=============
+keyseer.pipeline
+=================
 
 API de alto nivel: video -> keyframes, en una sola pasada.
 """
 
 import numpy as np
 
-from .core import MOG3, MOG3Config
+from .core import KeySeer, KeySeerConfig
 from .metrics import SignalAccumulator, combine
 from .selection import select_submodular, select_peaks
 
-__all__ = ["analyze_frames", "analyze_video", "extract_keyframes", "MOG3Result"]
+__all__ = ["analyze_frames", "analyze_video", "extract_keyframes", "KeySeerResult"]
 
 
-class MOG3Result:
+class KeySeerResult:
     """Resultado del analisis: series, score y keyframes."""
 
     def __init__(self, arrays, score, descriptors, keyframes=None):
@@ -24,14 +24,14 @@ class MOG3Result:
         self.keyframes = keyframes or []
 
     def __repr__(self):
-        return (f"MOG3Result(n_frames={len(self.score)}, "
+        return (f"KeySeerResult(n_frames={len(self.score)}, "
                 f"n_keyframes={len(self.keyframes)})")
 
 
 def analyze_frames(frames, config=None, resize_to=None, pool_block=8,
                    descriptor_grid=8, progress=None):
     """
-    Procesa un iterable de frames (H,W,C) y devuelve las series MOG3.
+    Procesa un iterable de frames (H,W,C) y devuelve las series KeySeer.
 
     `resize_to` = (h, w) reduce la resolucion del modelo. Recomendado:
     el coste es O(H*W*M) por frame y la metrica es robusta a la escala.
@@ -44,7 +44,7 @@ def analyze_frames(frames, config=None, resize_to=None, pool_block=8,
         if resize_to is not None and f.shape[:2] != tuple(resize_to):
             f = _resize(f, resize_to)
         if model is None:
-            model = MOG3(f.shape[0], f.shape[1], f.shape[2], config)
+            model = KeySeer(f.shape[0], f.shape[1], f.shape[2], config)
             acc = SignalAccumulator(pool_block=pool_block,
                                     descriptor_grid=descriptor_grid)
         acc.push(model.update(f))
@@ -105,7 +105,7 @@ def extract_keyframes(video_path, budget=8, config=None, resize_to=(180, 320),
     Extrae keyframes de un video.
 
     `method`: "submodular" (recomendado, con garantia 1-1/e) o "peaks".
-    Devuelve un MOG3Result. Los indices son relativos al submuestreo por
+    Devuelve un KeySeerResult. Los indices son relativos al submuestreo por
     `stride`; multiplica por `stride` para indices del video original.
     """
     acc, model = analyze_video(video_path, config=config, resize_to=resize_to,
@@ -114,7 +114,7 @@ def extract_keyframes(video_path, budget=8, config=None, resize_to=(180, 320),
     w = weights or {}
     score = combine(arrays, **w)
 
-    warm = int(1.0 / max((config or MOG3Config()).alpha, 1e-9))
+    warm = int(1.0 / max((config or KeySeerConfig()).alpha, 1e-9))
     usable = np.zeros_like(score, dtype=bool)
     usable[min(warm, len(score)):] = True
     score_masked = np.where(usable, score, 0.0)
@@ -128,4 +128,4 @@ def extract_keyframes(video_path, budget=8, config=None, resize_to=(180, 320),
     else:
         raise ValueError(f"metodo desconocido: {method}")
 
-    return MOG3Result(arrays, score, acc.sig.descriptors, [int(k) for k in kf])
+    return KeySeerResult(arrays, score, acc.sig.descriptors, [int(k) for k in kf])

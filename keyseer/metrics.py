@@ -1,8 +1,8 @@
 """
-mog3.metrics
-============
+keyseer.metrics
+================
 
-Agregacion de los mapas por pixel de MOG3 a escalares por frame.
+Agregacion de los mapas por pixel de KeySeer a escalares por frame.
 
 El pooling espacial no es trivial: la media simple es sensible a ruido
 disperso, y el maximo es sensible a outliers de un solo pixel. Se usa

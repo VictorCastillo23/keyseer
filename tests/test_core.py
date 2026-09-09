@@ -1,6 +1,6 @@
 import numpy as np
-from mog3 import MOG3, MOG3Config
-from mog3.metrics import spatial_coherence, spatial_pool
+from keyseer import KeySeer, KeySeerConfig
+from keyseer.metrics import spatial_coherence, spatial_pool
 
 
 def _bg(H=16, W=16, C=3, rng=None):
@@ -9,7 +9,7 @@ def _bg(H=16, W=16, C=3, rng=None):
 
 
 def test_weights_normalized():
-    m = MOG3(16, 16, 3, MOG3Config(alpha=0.05))
+    m = KeySeer(16, 16, 3, KeySeerConfig(alpha=0.05))
     rng = np.random.default_rng(0)
     for _ in range(30):
         m.update(_bg(rng=rng))
@@ -17,8 +17,8 @@ def test_weights_normalized():
 
 
 def test_variance_bounded():
-    cfg = MOG3Config(alpha=0.05)
-    m = MOG3(16, 16, 3, cfg)
+    cfg = KeySeerConfig(alpha=0.05)
+    m = KeySeer(16, 16, 3, cfg)
     rng = np.random.default_rng(1)
     for _ in range(40):
         m.update(_bg(rng=rng) * rng.uniform(0.5, 2.0))
@@ -27,7 +27,7 @@ def test_variance_bounded():
 
 
 def test_surprisal_nonneg_and_drops_when_stable():
-    m = MOG3(16, 16, 3, MOG3Config(alpha=0.1))
+    m = KeySeer(16, 16, 3, KeySeerConfig(alpha=0.1))
     rng = np.random.default_rng(2)
     first = m.update(_bg(rng=rng)).surprisal.mean()
     for _ in range(60):
@@ -42,7 +42,7 @@ def test_consolidation_separates_transient_from_persistent():
     cons = {}
 
     def run(persist_frames):
-        m = MOG3(16, 16, 3, MOG3Config(alpha=0.04, latency=L))
+        m = KeySeer(16, 16, 3, KeySeerConfig(alpha=0.04, latency=L))
         rng = np.random.default_rng(3)
         out = {}
         for _ in range(80):
@@ -67,7 +67,7 @@ def test_consolidation_separates_transient_from_persistent():
 def test_instantaneous_signals_are_blind_at_onset():
     """Proposicion 1: births no puede distinguir en el frame de inicio."""
     def onset_births(persist):
-        m = MOG3(16, 16, 3, MOG3Config(alpha=0.04))
+        m = KeySeer(16, 16, 3, KeySeerConfig(alpha=0.04))
         rng = np.random.default_rng(4)
         for _ in range(80):
             m.update(_bg(rng=rng))
@@ -88,3 +88,19 @@ def test_coherence_ranks_structure_above_sparse_noise():
 def test_spatial_pool_scalar_and_finite():
     v = spatial_pool(np.random.default_rng(6).random((64, 64)))
     assert np.isfinite(v) and v >= 0.0
+
+
+def test_static_object_no_padding_regardless_of_budget():
+    """El algoritmo de seleccion no debe rellenar el presupuesto con
+    keyframes redundantes de un evento verdaderamente estatico (se
+    investigo un criterio de parada extra y se encontro innecesario;
+    esto lo deja como regresion -- ver ESTADO.md seccion 10.3)."""
+    from keyseer.selection import select_submodular
+    T = 100
+    score = np.zeros(T)
+    score[20:80] = 1.0
+    # descriptor IDENTICO para todo el evento estatico -> cobertura satura
+    descriptors = {i: np.array([1.0, 0.0]) for i in range(20, 80)}
+    for budget in (1, 3, 6, 10):
+        kf = select_submodular(score, descriptors, budget=budget, min_distance=1)
+        assert len(kf) == 1, (budget, kf)

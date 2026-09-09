@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mog3"
+name = "keyseer"
 version = "0.1.0"
 description = "Keyframe detection via component consolidation in online Gaussian mixture background models"
 readme = "README.md"
@@ -17,4 +17,4 @@ peaks = ["scipy>=1.7"]
 all = ["opencv-python>=4.5", "scipy>=1.7"]
 
 [tool.setuptools.packages.find]
-include = ["mog3*"]
+include = ["keyseer*"]

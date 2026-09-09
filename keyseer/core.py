@@ -1,6 +1,6 @@
 """
-mog3.core
-=========
+keyseer.core
+============
 
 Modelo de mezcla de gaussianas por pixel, reimplementado desde las ecuaciones
 (no envuelve cv2.createBackgroundSubtractorMOG2), con lecturas
@@ -32,8 +32,8 @@ entre C, lo que sesga sigma^2 por un factor C en video a color. Aqui se usa
 el estimador MLE isotropico correcto ||delta||^2 / C. Esto se documenta como
 una diferencia deliberada respecto a la implementacion de referencia.
 
-Lecturas expuestas (la contribucion de MOG3)
---------------------------------------------
+Lecturas expuestas (la contribucion de KeySeer)
+------------------------------------------------
 1. Sorpresa predictiva (Shannon):
        S_t(x) = -log p(I_t(x) | theta_{t-1}(x))
    Instantanea. Se evalua ANTES de actualizar, asi que es genuinamente
@@ -57,13 +57,13 @@ Itti & Baldi (2009), "Bayesian surprise attracts human attention".
 from dataclasses import dataclass, field
 import numpy as np
 
-__all__ = ["MOG3Config", "MOG3", "FrameReadout"]
+__all__ = ["KeySeerConfig", "KeySeer", "FrameReadout"]
 
 _EPS = 1e-12
 
 
 @dataclass
-class MOG3Config:
+class KeySeerConfig:
     """Hiperparametros del modelo."""
 
     n_components: int = 5          # M: componentes por pixel
@@ -102,20 +102,20 @@ class FrameReadout:
     consolidation_index: int = -1
 
 
-class MOG3:
+class KeySeer:
     """
-    Modelo MOG3 online. Una pasada, memoria O(H*W*M) independiente de la
+    Modelo KeySeer online. Una pasada, memoria O(H*W*M) independiente de la
     longitud del video.
 
     Uso
     ---
-        model = MOG3(height, width, channels)
+        model = KeySeer(height, width, channels)
         for frame in video:
             readout = model.update(frame)   # frame: (H,W,C) float
     """
 
-    def __init__(self, height, width, channels=3, config: MOG3Config = None):
-        self.cfg = config or MOG3Config()
+    def __init__(self, height, width, channels=3, config: KeySeerConfig = None):
+        self.cfg = config or KeySeerConfig()
         self.H, self.W, self.C = height, width, channels
         M = self.cfg.n_components
         dt = self.cfg.dtype
