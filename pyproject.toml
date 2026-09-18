@@ -18,3 +18,10 @@ all = ["opencv-python>=4.5", "scipy>=1.7"]
 
 [tool.setuptools.packages.find]
 include = ["keyseer*"]
+
+[tool.pytest.ini_options]
+# evaluacion/ no se distribuye ni se instala (no es parte del paquete
+# keyseer) pero los tests de blobtrack/benchmark lo importan directamente
+# desde el repo -- sin esto, `pytest tests/` solo funciona si el cwd ya
+# esta en sys.path (p.ej. via PYTHONPATH=.).
+pythonpath = ["."]

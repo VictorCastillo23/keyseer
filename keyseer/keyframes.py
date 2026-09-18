@@ -53,13 +53,17 @@ class KeyframeResult:
                 f"backend={self.backend!r}, n_frames={self.n_frames})")
 
 
-def _run_backend(video_path, backend, resize_to, stride, backend_kwargs):
+def _run_backend(video_path, backend, resize_to, stride, backend_kwargs,
+                 grayscale=True, motion_gate=True, motion_gate_kwargs=None):
     if backend == "blobtrack":
         from .blobtrack import analyze_video_blobtrack
         r = analyze_video_blobtrack(video_path, resize_to=resize_to,
                                     stride=stride,
-                                    tracker_kwargs=backend_kwargs)
-        return r["scores"], r["descriptors"], r["n_frames"]
+                                    tracker_kwargs=backend_kwargs,
+                                    grayscale=grayscale,
+                                    motion_gate=motion_gate,
+                                    motion_gate_kwargs=motion_gate_kwargs)
+        return r["scores"], r["descriptors"], r["n_frames"], r["frame_indices"]
 
     elif backend == "gmm":
         from .pipeline import analyze_video
@@ -70,7 +74,7 @@ def _run_backend(video_path, backend, resize_to, stride, backend_kwargs):
                                    resize_to=resize_to, stride=stride)
         arrays = acc.sig.as_arrays()
         score = combine(arrays, gate_power=2.0)
-        return score, acc.sig.descriptors, len(score)
+        return score, acc.sig.descriptors, len(score), None
 
     else:
         raise ValueError(f"backend desconocido: {backend!r} "
@@ -85,17 +89,17 @@ def _video_fps(video_path):
     return fps if fps and fps > 0 else None
 
 
-def _save_frames(video_path, indices, stride, out_dir):
+def _save_frames(video_path, indices, out_dir):
     import cv2
     os.makedirs(out_dir, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
     paths = []
     for k in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(k) * stride)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(k))
         ok, f = cap.read()
         if not ok:
             continue
-        p = os.path.join(out_dir, f"keyframe_{int(k) * stride:06d}.jpg")
+        p = os.path.join(out_dir, f"keyframe_{int(k):06d}.jpg")
         cv2.imwrite(p, f)
         paths.append(p)
     cap.release()
@@ -103,8 +107,9 @@ def _save_frames(video_path, indices, stride, out_dir):
 
 
 def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
-                      method="submodular", min_distance=15, resize_to=(240, 320),
-                      stride=1, min_gain_ratio=0.0, backend_kwargs=None):
+                      method="submodular", min_distance=15, resize_to=(180, 320),
+                      stride=1, min_gain_ratio=0.0, backend_kwargs=None,
+                      grayscale=True, motion_gate=True, motion_gate_kwargs=None):
     """
     Punto de entrada unico para extraer keyframes de un video.
 
@@ -118,12 +123,21 @@ def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
                  mas lento, mas señales pero sin ventaja medida)
     method     : "submodular" (por defecto, con garantia de aproximacion)
                  o "peaks" (mas simple, sin diversidad explicita)
+    grayscale, motion_gate, motion_gate_kwargs : solo aplican al backend
+                 "blobtrack" (ver blobtrack.py); ignorados para "gmm".
 
     Devuelve un KeyframeResult.
+
+    NOTA (caveat conocido, no resuelto): `min_distance` en select_submodular/
+    select_peaks se mide en unidades de frame PROCESADO denso. Con stride
+    adaptativo (motion_gate), las posiciones densas ya no mapean a un
+    espaciado uniforme en tiempo real -- ver selection.py.
     """
     t0 = time.time()
-    score, descriptors, n_frames = _run_backend(
-        video_path, backend, resize_to, stride, backend_kwargs)
+    score, descriptors, n_frames, frame_indices = _run_backend(
+        video_path, backend, resize_to, stride, backend_kwargs,
+        grayscale=grayscale, motion_gate=motion_gate,
+        motion_gate_kwargs=motion_gate_kwargs)
 
     if method == "submodular":
         kf = select_submodular(score, descriptors, budget=budget,
@@ -138,12 +152,17 @@ def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
     elapsed = time.time() - t0
     fps_source = _video_fps(video_path)
 
+    if frame_indices is not None:
+        real_kf = [int(frame_indices[k]) for k in kf]
+    else:
+        real_kf = [int(k) * stride for k in kf]
+
     saved = []
     if out_dir is not None:
-        saved = _save_frames(video_path, kf, stride, out_dir)
+        saved = _save_frames(video_path, real_kf, out_dir)
 
     return KeyframeResult(
-        keyframe_indices=[int(k) * stride for k in kf],
+        keyframe_indices=real_kf,
         scores=score, elapsed=elapsed, n_frames=n_frames,
         fps_source=fps_source, backend=backend, saved_paths=saved,
     )

@@ -27,8 +27,8 @@ personales (pocos objetos) esto es mucho mas chico que el GMM por pixel.
 import time
 import numpy as np
 
-__all__ = ["BlobPersistenceTracker", "analyze_video_blobtrack",
-           "extract_keyframes_blobtrack"]
+__all__ = ["BlobPersistenceTracker", "MotionGatedStride",
+           "analyze_video_blobtrack", "extract_keyframes_blobtrack"]
 
 
 class BlobPersistenceTracker:
@@ -149,34 +149,143 @@ class BlobPersistenceTracker:
         return (d / n).ravel() if n > 1e-9 else d.ravel()
 
 
-def _iter_video(video_path, resize_to=None, stride=1):
+class MotionGatedStride:
+    """Gate barato para saltar procesamiento en tramos estaticos: un
+    cv2.absdiff(...).mean() sobre un frame gris ya reducido es mucho mas
+    barato que un tracker.update() completo (MOG2 + 2x morfologia +
+    componentes conectadas) -- esa diferencia es el compute que se ahorra.
+
+    HALLAZGO DE CALIBRACION (ver docs/ESTADO.md seccion 11): un heartbeat
+    UNICO no alcanza. Un objeto persistente-pero-ESTATICO (la señal central
+    que este proyecto existe para detectar) solo dispara `motion` en su
+    frame de aparicion; despues de eso, la escena esta quieta y solo el
+    heartbeat vuelve a alimentar tracker.update(). Como `age` solo avanza
+    en esas pasadas (no por tiempo real transcurrido), un heartbeat
+    calibrado para "escena vacia, es seguro saltar mucho" (p.ej. 8-16
+    frames) deja que el objeto tarde `min_age_to_count * heartbeat_interval`
+    frames reales en contar -- mas que la ventana tipica de un evento corto,
+    causando recall_real=0.5 en la suite sintetica (verificado
+    empiricamente). La correccion: el llamador informa via `tracks_active`
+    si el tracker tiene tracks vivos ahora mismo, y en ese caso se usa
+    `active_heartbeat_interval` (mucho mas chico) en vez de
+    `heartbeat_interval` -- manteniendo el heartbeat largo (y el ahorro de
+    compute grande) solo para escenas realmente vacias. Calibrado y
+    verificado en 24 semillas de evaluacion/harness.py: recall_real=1.0,
+    decoy_hits=0.0 con estos defaults, procesando ~25% de los frames.
+    """
+
+    def __init__(self, base_stride=1, max_quiet_stride=16, growth_factor=2,
+                motion_threshold=2.0, heartbeat_interval=None,
+                active_heartbeat_interval=2):
+        import cv2
+        self.cv2 = cv2
+        if max_quiet_stride < base_stride:
+            raise ValueError("max_quiet_stride must be >= base_stride")
+        self.base_stride = base_stride
+        self.max_quiet_stride = max_quiet_stride
+        self.growth_factor = growth_factor
+        self.motion_threshold = motion_threshold
+        self.heartbeat_interval = heartbeat_interval or max_quiet_stride
+        self.active_heartbeat_interval = active_heartbeat_interval
+        self._prev = None
+        self._quiet_streak = 0
+        self._gap = base_stride
+        self._last_processed_index = 0
+
+    def step(self, gray_probe, real_frame_index, tracks_active=False):
+        """Alimenta un probe gris ya decodificado+reducido, su indice real
+        de frame, y si el tracker tiene tracks activos ahora mismo. Devuelve
+        True sii el llamador debe procesar el frame completo (movimiento,
+        heartbeat, o primer frame visto)."""
+        interval = self.active_heartbeat_interval if tracks_active else self.heartbeat_interval
+        heartbeat_due = (real_frame_index - self._last_processed_index) >= interval
+        motion = (self._prev is None or
+                 float(self.cv2.absdiff(gray_probe, self._prev).mean())
+                 > self.motion_threshold)
+        self._prev = gray_probe
+        process = motion or heartbeat_due
+        if process:
+            self._quiet_streak = 0
+            self._gap = self.base_stride
+            self._last_processed_index = real_frame_index
+        else:
+            self._quiet_streak += 1
+            # el gap de SCHEDULING debe quedar acotado por el heartbeat
+            # (el que aplique) restante: sin este limite, el crecimiento
+            # geometrico puede programar el proximo probe mas alla de
+            # last_processed_index + interval, violando la garantia de "a
+            # lo sumo `interval` frames reales entre pasadas completas"
+            # (el chequeo de heartbeat_due de arriba solo se evalua AL
+            # llegar al probe, no antes de programarlo).
+            remaining_to_heartbeat = interval - (real_frame_index - self._last_processed_index)
+            self._gap = min(self.max_quiet_stride,
+                            self.base_stride * (self.growth_factor ** self._quiet_streak),
+                            remaining_to_heartbeat)
+        return process
+
+    def gap(self):
+        return self._gap
+
+
+def _iter_video(video_path, resize_to=None, stride=1, grayscale=True,
+                motion_gate=None, tracks_active_fn=None):
+    """Yields (frame, real_frame_index) pairs. real_frame_index es siempre
+    la posicion 0-based en el video FUENTE, sin importar stride/gating.
+    Los frames no seleccionados para procesar se cap.grab()-ean (sin
+    decodificar) en vez de cap.read() (grab+decode+return).
+
+    `tracks_active_fn`: callable sin argumentos que informa al motion_gate
+    si el tracker tiene tracks vivos AHORA MISMO (ver MotionGatedStride);
+    None equivale a "nunca hay tracks activos" (comportamiento legacy)."""
     import cv2
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"no se pudo abrir: {video_path}")
-    i = 0
+    i, next_check = 0, 0
     while True:
-        ok, f = cap.read()
-        if not ok:
+        if not cap.grab():
             break
-        if i % stride == 0:
+        if i == next_check:
+            ok, f = cap.retrieve()
+            if not ok:
+                break
             if resize_to is not None:
                 f = cv2.resize(f, (resize_to[1], resize_to[0]))
-            yield f
+            gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if (grayscale or motion_gate is not None) else None
+            out = gray if grayscale else f
+            if motion_gate is None:
+                yield out, i
+                next_check = i + stride
+            else:
+                tracks_active = tracks_active_fn() if tracks_active_fn else False
+                if motion_gate.step(gray, i, tracks_active=tracks_active):
+                    yield out, i
+                next_check = i + motion_gate.gap()
         i += 1
     cap.release()
 
 
 def analyze_video_blobtrack(video_path, resize_to=(180, 320), stride=1,
-                            tracker_kwargs=None):
+                            tracker_kwargs=None, grayscale=True,
+                            motion_gate=True, motion_gate_kwargs=None):
     t0 = time.time()
     tracker = BlobPersistenceTracker(**(tracker_kwargs or {}))
-    scores, n_active, descriptors = [], [], {}
+    if motion_gate is True:
+        gate = MotionGatedStride(base_stride=stride, **(motion_gate_kwargs or {}))
+    elif motion_gate in (False, None):
+        gate = None
+    else:
+        gate = motion_gate
+    tracks_active_fn = (lambda: len(tracker.tracks) > 0) if gate is not None else None
+    scores, n_active, descriptors, frame_indices = [], [], {}, []
     n = 0
-    for f in _iter_video(video_path, resize_to, stride):
+    for f, real_i in _iter_video(video_path, resize_to, stride,
+                                 grayscale=grayscale, motion_gate=gate,
+                                 tracks_active_fn=tracks_active_fn):
         s, na = tracker.update(f)
         scores.append(s)
         n_active.append(na)
+        frame_indices.append(real_i)
         if s > 0:
             descriptors[n] = tracker.descriptor()
         n += 1
@@ -184,6 +293,7 @@ def analyze_video_blobtrack(video_path, resize_to=(180, 320), stride=1,
         "scores": np.asarray(scores, dtype=np.float64),
         "n_active": np.asarray(n_active),
         "descriptors": descriptors,
+        "frame_indices": np.asarray(frame_indices, dtype=np.int64),
         "elapsed": time.time() - t0,
         "n_frames": n,
         "state_bytes": tracker.state_bytes(),
@@ -193,9 +303,12 @@ def analyze_video_blobtrack(video_path, resize_to=(180, 320), stride=1,
 
 def extract_keyframes_blobtrack(video_path, budget=6, method="submodular",
                                 min_distance=10, resize_to=(180, 320),
-                                stride=1, tracker_kwargs=None):
+                                stride=1, tracker_kwargs=None, grayscale=True,
+                                motion_gate=True, motion_gate_kwargs=None):
     from .selection import select_peaks, select_submodular
-    r = analyze_video_blobtrack(video_path, resize_to, stride, tracker_kwargs)
+    r = analyze_video_blobtrack(video_path, resize_to, stride, tracker_kwargs,
+                                grayscale=grayscale, motion_gate=motion_gate,
+                                motion_gate_kwargs=motion_gate_kwargs)
     if method == "submodular":
         kf = select_submodular(r["scores"], r["descriptors"], budget=budget,
                                min_distance=min_distance)
@@ -204,5 +317,7 @@ def extract_keyframes_blobtrack(video_path, budget=6, method="submodular",
                           prominence=0.0, top_n=budget)
     else:
         raise ValueError(f"metodo desconocido: {method}")
-    return {"keyframes": kf, "elapsed": r["elapsed"], "n_frames": r["n_frames"],
-            "state_bytes": r["peak_state_bytes"], "scores": r["scores"]}
+    real_kf = [int(r["frame_indices"][k]) for k in kf]
+    return {"keyframes": real_kf, "elapsed": r["elapsed"], "n_frames": r["n_frames"],
+            "state_bytes": r["peak_state_bytes"], "scores": r["scores"],
+            "frame_indices": r["frame_indices"]}
