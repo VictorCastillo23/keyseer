@@ -423,3 +423,97 @@ disco.
   retoma `backend="gmm"`.
 - No se ha probado el pipeline completo con video real filmado a mano
   (camara no fija) -- todos los backends asumen camara estatica.
+
+## 11. Preprocesamiento agresivo para uso real (backend blobtrack)
+
+Objetivo: preparar `blobtrack` (backend por defecto) para video real de
+camara fija, donde la mayor parte del tiempo no pasa nada. Tres cambios,
+todos activados por defecto en `analyze_video_blobtrack` /
+`extract_keyframes_blobtrack` / `keyseer.keyframes.extract_keyframes`:
+
+1. **Escala de grises antes de MOG2.** `_detect`/`update` nunca leen
+   color, solo la mascara binaria resultante -- confirmado en tiempo de
+   ejecucion, no solo por lectura de codigo. Sin cambio medible en
+   recall/decoy sobre la suite de señuelos.
+2. **Decode real de frames descartados.** `_iter_video` ahora usa
+   `cap.grab()` (sin decodificar) para los frames que el stride/gate va a
+   descartar, y solo `cap.retrieve()` para los que se procesan -- antes se
+   decodificaba TODO el video sin importar el stride.
+3. **Stride adaptativo por movimiento (`MotionGatedStride`).** Un
+   `cv2.absdiff(...).mean()` barato sobre el frame gris ya reducido decide
+   si hace falta correr el detector completo. Durante tramos quietos
+   sostenidos el espaciado crece geometricamente (`1,2,4,8,...`) hasta un
+   tope (`max_quiet_stride`).
+
+### 11.1 Calibracion: un solo heartbeat no alcanza
+
+Primer intento: un heartbeat unico (recorre todo el video cada
+`heartbeat_interval` frames reales como maximo, sin importar el estado)
+para acotar el riesgo de que el modelo de fondo quede desactualizado.
+Resultado contra la suite de 8 semillas (`evaluacion/harness.py`):
+recall_real cayo a **0.5** (decoy_hits se mantuvo en 0).
+
+Causa raiz: el rectangulo persistente-pero-ESTATICO de la suite (la señal
+central que este proyecto existe para detectar, ver seccion 1 y el
+hallazgo de Ψ) solo dispara `motion` en su frame de aparicion. Despues de
+eso la escena esta quieta, y el `age` de un track SOLO avanza en las
+pasadas donde `tracker.update()` corre -- no por tiempo real transcurrido.
+Con un heartbeat calibrado para "escena vacia, es seguro saltar mucho"
+(8-16 frames), un objeto asi tarda hasta `min_age_to_count *
+heartbeat_interval` frames reales en alcanzar el gate duro de
+`min_age_to_count=8` -- mas que la ventana tipica de un evento corto de la
+suite. Verificado con barridos de `motion_threshold` (0.05 a 2.0) y de una
+metrica de deteccion alternativa (fraccion de pixeles cambiados en vez de
+media global): el sintoma persistia identico sin importar la sensibilidad
+del gate, lo que descarto "el umbral esta mal calibrado" y confirmo "el
+mecanismo esta incompleto."
+
+**Correccion:** `MotionGatedStride.step()` recibe ahora un tercer
+parametro, `tracks_active` (que `analyze_video_blobtrack` alimenta con
+`len(tracker.tracks) > 0`), y usa un `active_heartbeat_interval` mucho mas
+chico que `heartbeat_interval` cuando hay tracks vivos. Esto desacopla dos
+preguntas distintas que el diseño original conflaba en un solo numero:
+"cada cuanto es seguro revisar si volvio a pasar algo" (escena vacia,
+heartbeat largo) vs. "cada cuanto hace falta re-observar algo que ya esta
+ahi para que su edad siga contando" (heartbeat corto).
+
+**Defaults calibrados y verificados en 24 semillas** (`base_stride=1,
+max_quiet_stride=16, growth_factor=2, motion_threshold=2.0,
+active_heartbeat_interval=2`): recall_real=1.0, decoy_hits=0.0 -- igual
+que sin gate -- procesando en promedio ~25% de los frames del video
+(131-143 de 541), ~2.7-2.9x mas rapido en reloj de pared. Robusto: el
+resultado se mantuvo identico barriendo `motion_threshold` de 0.5 a 3.0,
+o sea que la ganancia no depende de un ajuste fragil de un solo numero.
+
+### 11.2 Resultado (`evaluacion/benchmark.py`, 16 semillas)
+
+Nuevo driver ejecutable (antes no existia ninguno en el repo -- toda la
+evaluacion se corria a mano). `python -m evaluacion.benchmark --seeds 16`:
+
+| config | recall_real | decoy_hits | elapsed (s) | state_bytes |
+|---|---|---|---|---|
+| baseline (color, sin gate) | 1.00 | 0.00 | 1.30 | 400 |
+| grayscale_only | 1.00 | 0.00 | 1.23 | 250 |
+| aggressive (gris + gate) | 1.00 | 0.00 | 0.45 | 312.5 |
+
+`aggressive` iguala recall/decoy de `baseline` con ~2.9x menos tiempo de
+procesamiento y sin peor memoria de estado pico.
+
+### 11.3 Cambio de comportamiento no silencioso
+
+`resize_to` por defecto de `keyframes.extract_keyframes` bajo de
+`(240,320)` a `(180,320)` (unificado con `blobtrack.py`/`pipeline.py`,
+revalidado contra la suite). `grayscale=True` y `motion_gate=True` son
+ahora el default en todos los puntos de entrada respaldados por
+`blobtrack`; `extract_keyframes_blobtrack` devuelve indices de frame
+REALES en `"keyframes"` (antes devolvia posiciones densas sin aplicar
+`stride`, inconsistente con `keyframes.py`). `analyze_video_blobtrack` /
+`extract_keyframes_blobtrack` ganan una clave nueva `"frame_indices"` en
+el dict de resultado.
+
+**Leccion:** un gate de movimiento "barato y generico" que no sabe nada
+del estado del tracker es, por diseño, incompatible con detectar
+persistencia estatica -- que es literalmente la razon de ser de este
+proyecto. La correccion no fue "calibrar mejor un numero", fue notar que
+el gate necesitaba una segunda señal (¿hay algo que ya estoy seguimiento?)
+ademas del movimiento crudo.
