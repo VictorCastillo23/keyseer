@@ -9,8 +9,8 @@ desarrollo de KeySeer en un generador parametrizado y reutilizable.
 
 import numpy as np
 
-__all__ = ["generate_trap_video", "score_events", "pairwise_redundancy",
-           "TrapEvent"]
+__all__ = ["generate_trap_video", "generate_scale_contrast_video",
+           "score_events", "pairwise_redundancy", "TrapEvent"]
 
 
 class TrapEvent:
@@ -78,6 +78,98 @@ def generate_trap_video(path, W=320, H=240, fps=25, seed=0,
                         cv2.rectangle(f, (240 - i * 2, 170), (280 - i * 2, 205),
                                      (0, 200, 200), -1)))
     bg(30); t += 30
+
+    out.release()
+    return events
+
+
+# Con 12 frames ninguno pasa el config "aggressive": el gate de movimiento solo
+# re-procesa cada ~16 frames (heartbeat) y luego cada 2 (tracks activos), asi
+# que un evento estatico corto no llega a min_age_to_count=8 pasadas.
+# Medido: score>0 con aggressive exige >=28 frames (mota) y >=20 (parche).
+MOTA_FRAMES = 32
+PARCHE_FRAMES = 24
+
+
+def generate_scale_contrast_video(path, W=320, H=240, fps=25, seed=0,
+                                  gate_passing_decoys=False):
+    """
+    Un evento real PEQUEÑO y corto (cuadrado estatico) frente a un evento real
+    GRANDE y largo (circulo en movimiento continuo), mas un destello global
+    como señuelo. Existe porque generate_trap_video solo mezcla eventos
+    reales de tamaño parecido: con eso, el sesgo de escala del score de
+    blobtrack (area * edad) y de select_submodular (pondera cobertura por
+    score) es invisible. Aqui el score pico del evento grande es >=8x el del
+    pequeño (ver tests/test_benchmark.py), asi que un presupuesto chico de
+    keyframes tiende a gastarse entero en posiciones del evento grande.
+
+    Toda la geometria esta escrita en coordenadas de referencia 320x240 y se
+    escala a (W, H), asi que el escenario se puede generar a cualquier
+    resolucion (a 320x240 los pixeles coinciden con la version original).
+
+    `gate_passing_decoys=True` agrega DESPUES de los eventos anteriores (sin
+    moverlos) dos señuelos que SI pasan los gates de blobtrack (score > 0,
+    con descriptor), a diferencia de los de generate_trap_video, cuyo score
+    es exactamente 0:
+      - mota_pequena_transitoria: blob de ~1.5e-3 del frame, breve pero mas
+        largo que min_age_to_count. Con pesos binarios pesa igual que un
+        evento real (riesgo: magnitud ignorada).
+      - parche_de_luz_grande: parche localizado de ~37% del frame (bajo
+        max_area_frac=0.5). Con pesos identidad su area*edad domina
+        (riesgo opuesto: magnitud dominante).
+    """
+    import cv2
+    rng = np.random.default_rng(seed)
+    out = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
+    events = []
+    t = 0
+    sx, sy = W / 320.0, H / 240.0
+
+    def X(v):
+        return int(round(v * sx))
+
+    def Y(v):
+        return int(round(v * sy))
+
+    radius = max(1, int(round(30 * min(sx, sy))))
+
+    def bg(n):
+        for _ in range(n):
+            f = np.full((H, W, 3), 45, np.uint8)
+            f = cv2.add(f, rng.integers(0, 4, (H, W, 3), dtype=np.uint8))
+            out.write(f)
+
+    def advance(n, label, is_real, draw):
+        nonlocal t
+        s = t
+        for i in range(n):
+            f = np.full((H, W, 3), 45, np.uint8)
+            draw(f, i)
+            f = cv2.add(f, rng.integers(0, 4, (H, W, 3), dtype=np.uint8))
+            out.write(f)
+        t += n
+        events.append(TrapEvent(s, s + n, label, is_real))
+
+    bg(60); t += 60
+    advance(40, "objeto_pequeno_persistente", True,
+           lambda f, i: cv2.rectangle(f, (X(200), Y(150)), (X(218), Y(168)),
+                                     (0, 190, 0), -1))
+    bg(40); t += 40
+    advance(160, "movimiento_grande_continuo", True,
+           lambda f, i: cv2.circle(f, (X(40 + int(i * 1.5)), Y(120)), radius,
+                                  (0, 190, 0), -1))
+    bg(40); t += 40
+    advance(2, "destello_global", False, lambda f, i: f.__setitem__(slice(None), 225))
+    bg(30); t += 30
+    if gate_passing_decoys:
+        advance(MOTA_FRAMES, "mota_pequena_transitoria", False,
+               lambda f, i: cv2.rectangle(f, (X(272), Y(30)), (X(283), Y(41)),
+                                         (0, 190, 0), -1))
+        bg(30); t += 30
+        advance(PARCHE_FRAMES, "parche_de_luz_grande", False,
+               lambda f, i: cv2.rectangle(f, (0, 0), (X(200), Y(144)),
+                                         (200, 200, 200), -1))
+        bg(30); t += 30
 
     out.release()
     return events
