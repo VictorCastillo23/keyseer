@@ -30,10 +30,32 @@ from .selection import select_peaks, select_submodular
 
 __all__ = ["KeyframeResult", "extract_keyframes"]
 
+# El GMM (core.py) es NumPy puro por pixel: su costo escala con H*W, asi que NO
+# hereda el default mas grande de blobtrack (ver ESTADO.md seccion 12).
+GMM_RESIZE_TO = (180, 320)
+
 
 class KeyframeResult:
+    """Resultado de extract_keyframes.
+
+    keyframe_indices : numeros de frame REALES del video fuente, uno por
+                       keyframe seleccionado.
+    dense_positions  : posiciones DENSAS (indices validos en `scores`),
+                       misma longitud y orden que `keyframe_indices` --
+                       dense_positions[i] es el frame denso que produjo el
+                       frame real keyframe_indices[i].
+    scores           : señal densa (una entrada por frame procesado).
+    elapsed          : segundos que tardo el analisis + seleccion.
+    n_frames         : cantidad de frames DENSOS procesados.
+    fps_source       : fps del video fuente (o None si no se pudo leer).
+    backend          : nombre del backend usado ("blobtrack" o "gmm").
+    saved_paths      : rutas .jpg guardadas, si se paso `out_dir` (si no,
+                       lista vacia).
+    """
+
     def __init__(self, keyframe_indices, scores, elapsed, n_frames,
-                fps_source, backend, saved_paths=None):
+                fps_source, backend, saved_paths=None, *,
+                dense_positions=None):
         self.keyframe_indices = keyframe_indices
         self.scores = scores
         self.elapsed = elapsed
@@ -41,6 +63,7 @@ class KeyframeResult:
         self.fps_source = fps_source
         self.backend = backend
         self.saved_paths = saved_paths or []
+        self.dense_positions = dense_positions or []
 
     def timestamps(self):
         """Segundos de video para cada keyframe (requiere fps de la fuente)."""
@@ -56,7 +79,9 @@ class KeyframeResult:
 def _run_backend(video_path, backend, resize_to, stride, backend_kwargs,
                  grayscale=True, motion_gate=True, motion_gate_kwargs=None):
     if backend == "blobtrack":
-        from .blobtrack import analyze_video_blobtrack
+        from .blobtrack import DEFAULT_RESIZE_TO, analyze_video_blobtrack
+        if resize_to is None:
+            resize_to = DEFAULT_RESIZE_TO
         r = analyze_video_blobtrack(video_path, resize_to=resize_to,
                                     stride=stride,
                                     tracker_kwargs=backend_kwargs,
@@ -69,6 +94,8 @@ def _run_backend(video_path, backend, resize_to, stride, backend_kwargs,
         from .pipeline import analyze_video
         from .metrics import combine
         from .core import KeySeerConfig
+        if resize_to is None:
+            resize_to = GMM_RESIZE_TO
         cfg = KeySeerConfig(**(backend_kwargs or {}))
         acc, model = analyze_video(video_path, config=cfg,
                                    resize_to=resize_to, stride=stride)
@@ -107,7 +134,7 @@ def _save_frames(video_path, indices, out_dir):
 
 
 def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
-                      method="submodular", min_distance=15, resize_to=(180, 320),
+                      method="submodular", min_distance=15, resize_to=None,
                       stride=1, min_gain_ratio=0.0, backend_kwargs=None,
                       grayscale=True, motion_gate=True, motion_gate_kwargs=None):
     """
@@ -123,6 +150,11 @@ def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
                  mas lento, mas señales pero sin ventaja medida)
     method     : "submodular" (por defecto, con garantia de aproximacion)
                  o "peaks" (mas simple, sin diversidad explicita)
+    resize_to  : (alto, ancho) al que se reduce cada frame. None (por
+                 defecto) = default del backend: blobtrack.DEFAULT_RESIZE_TO
+                 para "blobtrack", GMM_RESIZE_TO para "gmm" (ambos hoy
+                 (180, 320)). None YA NO significa "sin reducir": para
+                 analizar a resolucion nativa pasar el tamano del video.
     grayscale, motion_gate, motion_gate_kwargs : solo aplican al backend
                  "blobtrack" (ver blobtrack.py); ignorados para "gmm".
 
@@ -152,10 +184,11 @@ def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
     elapsed = time.time() - t0
     fps_source = _video_fps(video_path)
 
+    dense_kf = [int(k) for k in kf]
     if frame_indices is not None:
-        real_kf = [int(frame_indices[k]) for k in kf]
+        real_kf = [int(frame_indices[k]) for k in dense_kf]
     else:
-        real_kf = [int(k) * stride for k in kf]
+        real_kf = [k * stride for k in dense_kf]
 
     saved = []
     if out_dir is not None:
@@ -165,4 +198,5 @@ def extract_keyframes(video_path, budget=8, out_dir=None, backend="blobtrack",
         keyframe_indices=real_kf,
         scores=score, elapsed=elapsed, n_frames=n_frames,
         fps_source=fps_source, backend=backend, saved_paths=saved,
+        dense_positions=dense_kf,
     )

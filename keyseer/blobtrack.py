@@ -27,8 +27,17 @@ personales (pocos objetos) esto es mucho mas chico que el GMM por pixel.
 import time
 import numpy as np
 
-__all__ = ["BlobPersistenceTracker", "MotionGatedStride",
+__all__ = ["BlobPersistenceTracker", "MotionGatedStride", "DEFAULT_RESIZE_TO",
            "analyze_video_blobtrack", "extract_keyframes_blobtrack"]
+
+# (alto, ancho) al que se reduce cada frame antes de MOG2. Los parametros del
+# tracker (min_area=60, morph_kernel=5, max_match_dist=40) estan en PIXELES, asi
+# que un objeto chico de video en alta resolucion desaparece si el frame se
+# reduce demasiado (a 320 de ancho un objeto de 1.6% del ancho de una fuente
+# 1280x720 se pierde; a 640 no). Aun asi el default es (180, 320): sobre el
+# dataset real (fuentes <=384 px) rindio mejor que (360, 640); ver ESTADO.md
+# seccion 12, "Reversion".
+DEFAULT_RESIZE_TO = (180, 320)
 
 
 class BlobPersistenceTracker:
@@ -265,7 +274,7 @@ def _iter_video(video_path, resize_to=None, stride=1, grayscale=True,
     cap.release()
 
 
-def analyze_video_blobtrack(video_path, resize_to=(180, 320), stride=1,
+def analyze_video_blobtrack(video_path, resize_to=DEFAULT_RESIZE_TO, stride=1,
                             tracker_kwargs=None, grayscale=True,
                             motion_gate=True, motion_gate_kwargs=None):
     t0 = time.time()
@@ -302,7 +311,7 @@ def analyze_video_blobtrack(video_path, resize_to=(180, 320), stride=1,
 
 
 def extract_keyframes_blobtrack(video_path, budget=6, method="submodular",
-                                min_distance=10, resize_to=(180, 320),
+                                min_distance=10, resize_to=DEFAULT_RESIZE_TO,
                                 stride=1, tracker_kwargs=None, grayscale=True,
                                 motion_gate=True, motion_gate_kwargs=None):
     from .selection import select_peaks, select_submodular
