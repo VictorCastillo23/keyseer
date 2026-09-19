@@ -517,3 +517,76 @@ persistencia estatica -- que es literalmente la razon de ser de este
 proyecto. La correccion no fue "calibrar mejor un numero", fue notar que
 el gate necesitaba una segunda señal (¿hay algo que ya estoy seguimiento?)
 ademas del movimiento crudo.
+
+## 12. Tamano de resize de blobtrack y señuelos que pasan los gates (turno 9)
+
+Los parametros del tracker estan en PIXELES (`min_area=60`, kernel 5,
+`max_match_dist=40`): en video real de alta resolucion, reducir de mas borra
+objetos chicos. Se midio antes de subir el default (`--experiment resolution`).
+
+**Señuelos con score > 0.** Antes: pesos binarios (`score > 0`) subian
+recall_real 0.5 -> 1.0 en `scale_contrast` (b=3,5; decoy 0.0), pero todos los
+señuelos del trap suite tienen score exactamente 0, asi que no exponian el
+riesgo. `generate_scale_contrast_video(gate_passing_decoys=True)` agrega
+`mota_pequena_transitoria` (1.6e-3 del frame, 32 frames) y `parche_de_luz_grande`
+(37.5%, 24 frames); con 12 frames ninguno pasaba `aggressive` (hacen falta >=28
+y >=20). 1280x720, 8 semillas, identico en los 4 tamanos (recall/decoy):
+
+| config | pesos | b=3 | b=5 | b=8 |
+|---|---|---|---|---|
+| baseline | identity | 0.50/1.0 | 0.50/1.0 | 1.00/1.0 |
+| baseline | binary | 1.00/0.0 | 1.00/1.0 | 1.00/1.0 |
+| aggressive | identity | 0.50/0.0 | 0.50/1.0 | 1.00/2.0 |
+| aggressive | binary | 1.00/0.0 | 1.00/0.0 | 1.00/2.0 |
+
+Ambos riesgos son reales: con identity el parche domina (score pico 9.0 vs 1.7
+del circulo y 0.19 del objeto chico); con binary entra la mota (0.056) en b=5
+baseline. binary nunca captura mas señuelos que identity y recupera el evento
+chico: los señuelos NO revierten la conclusion, pero no es gratis. Adoptarlo en
+`selection.py` sigue siendo decision aparte.
+
+**Barrido de tamano** (trap 320x240 nativo + scale_contrast 1280x720):
+
+| tamano | trap recall/decoy (b=5,8) | fps trap base/agg | fps HD base/agg |
+|---|---|---|---|
+| 180x320 | 1.00/0.00 | 311/218 | 151/77 |
+| 270x480 | 1.00/0.00 | 205/150 | 116/63 |
+| 360x640 | 1.00/0.00 | 138/104 | 91/54 |
+| 540x960 (info) | 1.00/0.00 | 61/47 | 49/34 |
+
+(trap b=3 da 0.667 en todos, tambien a 180x320: limite de presupuesto.) Regla:
+el mayor de {270x480, 360x640} que iguale la referencia en trap con baseline y
+aggressive -> **`DEFAULT_RESIZE_TO = (360, 640)`**. Costo del benchmark por
+defecto (8 semillas): elapsed 1.70 -> 3.82 s baseline, 0.59 -> 1.31 s
+aggressive (~2.2x); recall 1.00 / decoy 0.00 sin cambio.
+
+**Por que sube.** La suite no lo muestra (recall/decoy identico en todos los
+tamanos). Un cuadrado estatico en 1280x720 (40 frames): lado 20 px (1.6% del
+ancho) desaparece a 320 y 480 de ancho y se detecta desde 640 (baseline y
+aggressive); 32 px falla en aggressive a 320 y anda desde 480; contraste tenue
+(+25 gris) vs normal: sin efecto. El gate de movimiento nunca dispara en el
+onset (diff medio 0.01-0.17 vs umbral 2.0): aggressive solo detecta por
+heartbeat; la resolucion ayuda, el cuello del gate es la DURACION.
+
+**Por backend.** El GMM es NumPy por pixel (costo ~ H*W): mantiene (180,320).
+`extract_keyframes(resize_to=None)` resuelve por backend (`DEFAULT_RESIZE_TO` /
+`GMM_RESIZE_TO`); `None` ya no significa "sin reducir". Reemplaza 11.3.
+
+Abierto: eventos estaticos <~28 frames invisibles para `aggressive`; con fuente
+nativa 320x240 aggressive+binary+b=3 pasa de 1.0 a 0.5 (cluster del objeto 11
+frames vs 13-14 del circulo; knife-edge, no perdida de deteccion); sin probar
+objetos <1.6% del ancho ni fuentes distintas de 720p; fps es ruidoso.
+
+**Reversion del default a (180, 320).** Evaluacion sobre `dataset/` real (14
+carpetas; 9 con eventos = 31 ventanas fijadas mirando los frames antes de
+correr; presupuesto = extremo superior de "keys esperados" en
+`dataset/analisis-frames.md`). Aciertos / extras: 180x320 23/31, 8; 360x640
+20/31, 13; nativo sin ampliar 19/31, 11; muestreo uniforme 23/31, 13. Casi todas
+las fuentes miden <=384 px de ancho, asi que 360x640 es una ampliacion. La
+diferencia es de 3-4 ventanas y las ventanas son anchas: no es concluyente,
+pero ningun dato respalda el aumento. `DEFAULT_RESIZE_TO` vuelve a (180, 320);
+la constante unica y la resolucion por backend de `resize_to=None` se mantienen
+(`None` sigue sin significar "sin reducir"). La tabla y la regla de arriba se
+conservan como registro del barrido: su decision de default queda reemplazada
+por esta. Sigue sin probarse en video real de alta resolucion, que es donde
+aplica la justificacion original (objetos <2% del ancho).
