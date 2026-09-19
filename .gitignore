@@ -2,3 +2,6 @@
 .atl/
 
 dataset/
+.gga
+__pycache__/
+*.egg-info/
