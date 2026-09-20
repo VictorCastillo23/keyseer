@@ -1,6 +1,6 @@
 # KeySeer — Estado del trabajo, limitaciones y agenda
 
-**Versión:** 0.1.0 · **Fecha:** 8 de septiembre de 2026
+**Versión:** 0.1.0 · **Fecha:** 8 de septiembre de 2026 · **Última actualización:** 20 de septiembre de 2026 (§13)
 **Propósito:** documento interno de estado. Registra qué está demostrado, qué
 está refutado, qué está sin verificar, y qué sigue. Escrito para ser usado
 como base de la sección de limitaciones del paper.
@@ -20,8 +20,18 @@ banco sintético de prueba.
 | Señal Ψ separa transitorio de persistente | verificada, 11.9x |
 | Hipótesis de sorpresa bayesiana (KL) | **refutada**, 1.01x |
 | Métrica compuesta rechaza señuelos | **falla**, separación negativa |
-| Validación en vídeo real | **inexistente** |
-| Comparación contra baselines | **inexistente** |
+| Validación en vídeo real | **inexistente** (al 8 sep; *superado*: ver nota y §10.4, §12, §13) |
+| Comparación contra baselines | **inexistente** (al 8 sep; *superado*: `evaluacion/RESULTADOS.md` en sintético, §13 en real) |
+
+> **Actualización (20 sep).** Este resumen y las §2-§7 describen el estado del
+> **backend GMM** al 8 de septiembre y se conservan como registro. Después: el
+> camino práctico pasó a `blobtrack` (§10), se probó en video real (`vtest.avi`,
+> §10.4) y sobre un dataset local de 14 carpetas (§12 "Reversion", §13), y
+> existen baselines en `evaluacion/`. Resultado real más reciente (`blobtrack`
+> por defecto, 9 carpetas con ventanas de evento, 31 ventanas): 23/31 aciertos,
+> 8 extras; muestreo uniforme 23/31, 13 extras. **No concluyente** (ventanas
+> anchas, fuentes chicas). Sigue sin haber validación en video de alta
+> resolución ni con cámara móvil. Detalle y pendientes en §13.
 
 ---
 
@@ -175,6 +185,11 @@ Hay que separar dos cosas que no deben confundirse en el paper:
 
 ### 4.4 Validación exclusivamente sintética
 
+> **Superado (20 sep):** esta sección describe el 8 de septiembre. Desde
+> entonces se procesó video real con `blobtrack` (§10.4, §12, §13); las corridas
+> documentadas sobre el dataset real usan solo `blobtrack`, no el backend GMM.
+> Se conserva el texto original.
+
 **Ningún vídeo real ha sido procesado.** Todos los resultados provienen de
 vídeos generados con formas geométricas sobre fondo plano. Esto invalida
 cualquier afirmación sobre desempeño práctico. Es la brecha más grande entre
@@ -240,6 +255,13 @@ Barato, principiado, y probablemente mejora el rechazo del destello de forma
 sustancial. **Repetir la ablación de §3.2 y §4.1 con la L corregida antes de
 cualquier otra cosa** — parte del fallo puede desaparecer aquí.
 
+*Estado posterior (20 sep):* se probó L=54 frente a L=20: mejoró el recall de
+eventos reales pero **no** el rechazo de ruido (`evaluacion/RESULTADOS.md` §5).
+Los defaults actuales de `KeySeerConfig` son
+`alpha=0.01`, `c_T=0.01`, `latency=12`; con esos valores la regla da
+`t_muerte` ≈ 69 frames (≈ 54 solo con `alpha=0.02`, que es el valor con el que
+se calcularon los números de esta sección).
+
 ### Paso 2 — Rechazo de ruido por trayectoria de varianza
 Hipótesis: las componentes nacidas de ruido **no estrechan su varianza**
 (siguen ajustando datos incoherentes, $\sigma^2$ permanece alta), mientras que
@@ -266,11 +288,20 @@ detectar modos de fallo que lo sintético no expone. Después cuantitativa sobre
 benchmark. Es probable que esto genere una nueva lista de limitaciones; ese es
 su propósito.
 
+*Estado posterior (20 sep):* la parte cualitativa se hizo con `blobtrack`
+(`vtest.avi`, §10.4; dataset local de 14 carpetas, §13). La parte cuantitativa
+sobre un benchmark estándar no se hizo; ver los pendientes de §13.9.
+
 ### Paso 5 — Protocolo experimental
 Baselines: muestreo uniforme, k-means sobre histogramas, umbral de diferencia
 de frames, MOG2+conteo de foreground (el método de la primera iteración), y
 al menos un método reciente. Ablación de cada señal. Pruebas de significancia.
 Sin esto no hay manuscrito.
+
+*Estado posterior (20 sep):* los baselines de esta lista existen en
+`evaluacion/baselines.py` y se compararon en sintético
+(`evaluacion/RESULTADOS.md`); en video real solo se comparó contra muestreo
+uniforme (§13.4).
 
 ### Paso 6 — Optimización (solo si el rendimiento es un eje de la tesis)
 Numba o Cython sobre el bucle de `update`. Postergable: no afecta la validez
@@ -520,6 +551,11 @@ ademas del movimiento crudo.
 
 ## 12. Tamano de resize de blobtrack y señuelos que pasan los gates (turno 9)
 
+> **Nota (20 sep): el default `DEFAULT_RESIZE_TO = (360, 640)` decidido en esta
+> seccion fue REVERTIDO a `(180, 320)`** (ver "Reversion del default" al final
+> de la seccion y §13). Las menciones a (360, 640) como default estan
+> *superadas*; se conservan como registro del barrido.
+
 Los parametros del tracker estan en PIXELES (`min_area=60`, kernel 5,
 `max_match_dist=40`): en video real de alta resolucion, reducir de mas borra
 objetos chicos. Se midio antes de subir el default (`--experiment resolution`).
@@ -556,12 +592,13 @@ chico: los señuelos NO revierten la conclusion, pero no es gratis. Adoptarlo en
 
 (trap b=3 da 0.667 en todos, tambien a 180x320: limite de presupuesto.) Regla:
 el mayor de {270x480, 360x640} que iguale la referencia en trap con baseline y
-aggressive -> **`DEFAULT_RESIZE_TO = (360, 640)`**. Costo del benchmark por
-defecto (8 semillas): elapsed 1.70 -> 3.82 s baseline, 0.59 -> 1.31 s
+aggressive -> **`DEFAULT_RESIZE_TO = (360, 640)`** [*SUPERADO por la
+Reversion al final de la seccion: el default vigente es (180, 320)*]. Costo
+del benchmark por defecto (8 semillas): elapsed 1.70 -> 3.82 s baseline, 0.59 -> 1.31 s
 aggressive (~2.2x); recall 1.00 / decoy 0.00 sin cambio.
 
-**Por que sube.** La suite no lo muestra (recall/decoy identico en todos los
-tamanos). Un cuadrado estatico en 1280x720 (40 frames): lado 20 px (1.6% del
+**Por que sube.** [*Argumento de la decision superada; ver Reversion.*] La
+suite no lo muestra (recall/decoy identico en todos los tamanos). Un cuadrado estatico en 1280x720 (40 frames): lado 20 px (1.6% del
 ancho) desaparece a 320 y 480 de ancho y se detecta desde 640 (baseline y
 aggressive); 32 px falla en aggressive a 320 y anda desde 480; contraste tenue
 (+25 gris) vs normal: sin efecto. El gate de movimiento nunca dispara en el
@@ -590,3 +627,208 @@ la constante unica y la resolucion por backend de `resize_to=None` se mantienen
 conservan como registro del barrido: su decision de default queda reemplazada
 por esta. Sigue sin probarse en video real de alta resolucion, que es donde
 aplica la justificacion original (objetos <2% del ancho).
+
+## 13. Evaluacion con dataset real y experimentos descartados (turno 10)
+
+Objetivo: medir el camino por defecto (`blobtrack`, gris + motion gate,
+180x320, submodular, pesos identity) contra video real y dejar por escrito lo
+que se probo y se descarto. Todo es evidencia sobre 14 carpetas locales, con
+ventanas anchas y fuentes chicas: nada de esto es concluyente (pendientes en
+13.9). Ya documentado en §12 y no repetido aqui: scale_contrast con pesos
+binary (recall 0.5 -> 1.0 en b=3,5), señuelos que pasan los gates, barrido de
+resize, ceguera del motion gate a la escala, y la Reversion a (180, 320).
+
+Cambios de repo que acompañan: `KeyframeResult.dense_positions` (indices
+densos alineados con `keyframe_indices`; `scores` es denso);
+`extract_keyframes(resize_to=None)` resuelve por backend (§12); en
+`evaluacion/`: `harness.generate_scale_contrast_video`,
+`benchmark.apply_weighting` y `--experiment weighting|resolution`,
+`visualizar_dataset.py`, `graficar_dataset.py`, `dataset_esperado.json`. La
+suite tiene 116 tests (`pytest tests/`); matplotlib se importa perezosamente y
+los tests de logica no lo necesitan.
+
+### 13.1 Protocolo con datos reales
+
+- **`dataset/`** (raiz del repo): 14 carpetas de PNG consecutivos mas
+  `dataset/analisis-frames.md` (eventos y "keys esperados" escritos por el
+  usuario; no se edita). Esta en `.gitignore` (~622 MB): **datos locales, no
+  versionados**. Disposicion que esperan los scripts:
+  `dataset/<Carpeta>/<Carpeta>_NNNNNN.png` (se ordena por el sufijo numerico;
+  en `Candela_m1_10` los archivos son `Candela_m1.10_NNNNNN.png`). Conteos y
+  contiguidad de las 14 carpetas verificados contra el md: todos coinciden.
+- **`evaluacion/dataset_esperado.json`**: ventanas de evento y rango
+  `keys_esperados` por carpeta. 9 carpetas tienen ventanas (31 en total);
+  Foliage, Snellen, HighwayI, HighwayII y Toscana solo tienen el rango de
+  cantidad. Las ventanas se fijaron mirando los frames ANTES de correr el
+  algoritmo.
+- **Presupuesto** por carpeta = extremo superior de "keys esperados" (minimo 1).
+- **Metricas** (`visualizar_dataset.clasificar`): una ventana acierta si tiene
+  >= 1 keyframe; *extra* = keyframe fuera de toda ventana; *redundante* = 2do
+  keyframe dentro de una ventana ya cubierta. El md da frames aproximados, asi
+  que las ventanas son anchas y el recall casi no discrimina; extras y
+  redundancia si.
+- **Scripts** (`python -m evaluacion.visualizar_dataset` y
+  `python -m evaluacion.graficar_dataset`; opciones `--only NOMBRE ...`,
+  `--budget N`, `--out DIR`): ensamblan cada carpeta en un video temporal sin
+  perdida (FFV1, o MJPG si no abre), corren `extract_keyframes` por defecto y
+  guardan PNG (tablas / graficas x-y) en `evaluacion/resultados_dataset/` y
+  `evaluacion/resultados_grafica/`, que si estan versionadas y son
+  regenerables. Requieren `pip install matplotlib` (no es un extra declarado
+  en `pyproject.toml`).
+
+### 13.2 Discrepancias entre `analisis-frames.md` y los frames
+
+Registradas aqui porque el md es descripcion del usuario y no se modifica:
+
+| carpeta | el md dice | los frames muestran |
+|---|---|---|
+| CaVignal | el movimiento empieza ~200 y el hombre termina en el centro | empieza ~135-160; termina a la DERECHA (~85% del ancho) |
+| Candela_m1_10 | frame 0 = lobby vacio; bolsa abandonada al final | frame 0 no esta vacio (un zapato en el borde derecho); el hombre entra ~f5-30 y deja la bolsa ~f50-70; la bolsa solo queda abandonada cuando el se va (~f320-340) |
+| CAVIAR1 | la mujer de negro camina hacia la camara, ~400 | se ALEJA de la camara y entra ~f300-350 |
+| Foliage, PeopleAndFoliage | follaje en movimiento | ademas la CAMARA se mueve (el encuadre cambia) |
+| CAVIAR2 | "3-4 personas detenidas" ~230 | no es evidente: 2-3 figuras caminando |
+| Toscana | (secuencia) | 6 fotos muestreadas y dispersas, no un video continuo |
+
+### 13.3 Resultado por carpeta (camino por defecto)
+
+| carpeta | frames | budget | keyframes encontrados | aciertos | extras |
+|---|---|---|---|---|---|
+| Board | 228 | 4 | 15, 31, 130, 197 | 3/3 | 0 |
+| Candela_m1_10 | 350 | 4 | 40, 97, 151, 320 | 2/3 | 2 |
+| CAVIAR1 | 610 | 6 | 86, 164, 314, 357, 480, 560 | 4/4 | 1 |
+| CAVIAR2 | 460 | 4 | 30, 64, 130, 428 | 2/3 | 1 |
+| CaVignal | 258 | 2 | 166, 238 | 1/2 | 1 |
+| HallAndMonitor | 296 | 5 | 39, 64, 91, 120, 290 | 3/4 | 0 |
+| HumanBody2 | 740 | 7 | 52, 71, 304, 346, 495, 547, 578 | 3/5 | 2 |
+| IBMtest2 | 90 | 3 | 35, 50, 65 | 3/3 | 0 |
+| PeopleAndFoliage | 341 | 4 | 65, 99, 211, 275 | 2/4 | 1 |
+| **9 con ventanas** | | | | **23/31** | **8** |
+| Foliage | 394 | 1 | 113 | (0-1 esperado: dentro) | - |
+| HighwayI | 440 | 6 | 22, 49, 66, 149, 256, 321 | (4-6: dentro) | - |
+| HighwayII | 500 | 6 | 22, 50, 66, 117, 259, 385 | (4-6: dentro) | - |
+| Snellen | 321 | 2 | 19, 104 | (1-2: dentro) | - |
+| Toscana | 6 | 3 | (ninguno) | (2-3 esperados) | - |
+
+Lecturas puntuales:
+
+- **Candela**: la ventana final (325-349) se pierde por 5 frames; el 320 es el
+  hombre yendose, que es lo mas cercano a "objeto abandonado" que ve el
+  metodo (el abandono es semantico; ver 13.5).
+- **HallAndMonitor**: la ventana 3 (`cruce_central`, 175-225) falla porque el
+  score es ~0 ahi: no hay tracks contados, luego no hay frames candidatos.
+- **Toscana**: 0 keyframes, sin error. Son 6 frames y un track necesita
+  `min_age_to_count=8` para contar.
+- "Dentro del rango" en las carpetas sin ventanas solo mira la cantidad; que
+  el conteo coincida con el rango es consecuencia del presupuesto (13.5).
+
+### 13.4 Comparacion de configuraciones (mismas 9 carpetas, 31 ventanas)
+
+| configuracion | aciertos /31 | extras |
+|---|---|---|
+| **180x320 (default)** | **23** | **8** |
+| 360x640 | 20 | 13 |
+| nativo, sin ampliar | 19 | 11 |
+| muestreo uniforme | 23 | 13 |
+| selector por evento (13.7; experimento, no adoptado) | 15-16 | 4-5 |
+
+Las diferencias son de 3-4 ventanas sobre 31: **no concluyente**. Casi todas las
+fuentes miden <=384 px de ancho (solo Toscana es 800x600), asi que 360x640 es
+una prueba de ampliacion, no de video de alta resolucion, que sigue sin
+probarse. Es la evidencia detras de la Reversion de §12.
+
+### 13.5 Que expone la evaluacion real
+
+- **El conteo lo fija el presupuesto, no el contenido.** Con `budget=8` (default
+  de la libreria) Foliage (esperado 0-1), Snellen (1-2) y CaVignal (2) devuelven
+  8 keyframes. Sin criterio de parada por contenido, el presupuesto se llena.
+- **Flujo sin eventos discretos** (HighwayI/II, presupuesto 6): la mayor
+  separacion entre keyframes consecutivos es 45% / 41% del video a 360x640 y
+  27% / 28% a 180x320, frente a 20% del muestreo uniforme.
+- **Estados que la resta de fondo no puede proponer**: el frame 0, el estado
+  inicial estatico o la "escena vacia" de referencia. "Objeto abandonado" es
+  semantico; el metodo solo lo aproxima con el evento de salida.
+
+### 13.6 `min_gain_ratio` sobre datos reales (confirma la advertencia de `selection.py`)
+
+3 clips, 180x320, budget 8, pesos identity:
+
+| ratio | CaVignal | Candela | HallAndMonitor |
+|---|---|---|---|
+| 0 (default) | 7 keyframes: 2/2 aciertos, 5 extras | 5 keyframes: 2/3, 2 extras | 8 keyframes: 3/4, 1 extra |
+| 0.1 | 4 keyframes: 1/2, 3 extras | 2 keyframes: 1/3 | 2 keyframes: 2/4 |
+| 0.2 | 1 keyframe, 0-1 aciertos | 1 keyframe, 0-1 aciertos | 1 keyframe, 0-1 aciertos |
+
+Ningun umbral global lleva CaVignal a ~2 keyframes sin perder eventos reales en
+otras carpetas.
+
+### 13.7 Criterio de parada por evento — experimento, NO adoptado, NO esta en el repo
+
+Se probo, con scripts descartables fuera del repo, reemplazar el presupuesto
+global por uno por evento. *Evento* = cluster de tracks de `blobtrack` (contados
+>= 8 frames, area maxima >= 0.3% del frame, fusionados si se solapan dentro de
+5 frames). Por evento, facility-location voraz con el primer pick siempre
+incluido y picks extra solo si su ganancia >= rho x ganancia del primero
+(rho 0.6, maximo 3), o exactamente 1 por evento.
+
+- **Sintetico (8 semillas)**: en el trap suite, recall 1.00 / 0.00 señuelos con
+  3.0 keyframes (1 por evento) frente a 6.2 del presupuesto 8 identity actual.
+  A budget 3 el actual da 0.67-0.79 a 360x640 y el por-evento mantiene 1.00.
+  En scale_contrast + señuelos: recall 1.00 pero decoy_hits 1.0 (el parche de
+  luz grande es un "evento" valido para la definicion).
+- **Real @180x320**: CaVignal 5 keyframes (+4 extras) -> 2 (+1) con rho 0.6, o
+  1 (0 extras) con 1 por evento. HallAndMonitor baja a 2/4 (actual 3/4): los
+  tracks solapados fusionan la escena larga y cargada en 2 eventos gigantes. A
+  360x640 Hall colapsa en UN evento [12, 295] y CaVignal a 0/2. Foliage produce
+  3-4 eventos falsos.
+- **Veredicto: no adoptado.** Hace falta una definicion de evento robusta a la
+  resolucion (p. ej. por solapamiento espacial), mas clips reales y que
+  `analyze_video_blobtrack` exponga la vida de cada track.
+- **Caveat de validez**: las tablas de tracks reales se vieron antes de fijar
+  el umbral de area, asi que no es un holdout limpio. La corrida posterior de
+  las 14 carpetas uso los parametros sin cambios: 15-16/31 aciertos frente a
+  23/31 del camino por defecto (13.4).
+
+### 13.8 Ideas descartadas al revisar un baseline ingenuo
+
+Baseline revisado: fraccion de foreground de MOG2 + normalizacion min-max +
+`find_peaks`. Probado en clips sinteticos de 3 secciones.
+
+- **Min-max global**: un destello global (score 1.0) esconde los eventos
+  reales; el destello se capturo en 5/5 semillas y el evento se perdio.
+- **learningRate automatico de MOG2**: un objeto presente desde el frame ~2
+  queda invisible (0 detecciones); con `learningRate=1/500` fijo se detecta.
+  Confirmacion independiente de §10.2.
+- **Min-max por seccion**: recupera el evento chico pero estira secciones casi
+  constantes en picos espurios (9 keyframes falsos a partir de una señal que
+  varia 0.0887-0.0972).
+- **Metrica por seccion con reinicio del modelo**: pierde eventos en los bordes
+  de seccion (un objeto presente en el primer frame se aprende como fondo); un
+  pre-roll de 30 frames cuesta +10% de computo y no lo recupera.
+- **Secciones de igual movimiento acumulado**: 7-9 de 8-9 keyframes caen en la
+  seccion de movimiento continuo y el evento chico se fusiona con el inicio de
+  la region de alto movimiento.
+- **z-score robusto (mediana/MAD) movil sobre el NIVEL**: 0 detecciones.
+- **Deteccion de flanco de subida sobre la fraccion de foreground cruda**, z
+  robusto <= 5: devolvio exactamente los 2 onsets reales, 0 keyframes falsos en
+  5/5 semillas (con z=6 se pierde el evento chico, z~5.8). **No se probo sobre
+  el score de `blobtrack`.**
+
+`blobtrack` ya rechaza destello y parpadeo de forma estructural
+(`max_area_frac=0.5`, `min_age_to_count=8`, `learningRate` forzado).
+
+### 13.9 Pendientes consolidados
+
+1. **Sin criterio de parada por contenido**: el presupuesto decide el conteo
+   (13.5); `min_gain_ratio` global y el selector por evento (13.6, 13.7) no lo
+   resuelven.
+2. **Frame 0 / estados de referencia** no detectables por construccion (13.5).
+3. **Ceguera del motion gate a la escala** (objetos chicos y tenues estaticos,
+   eventos < ~28 frames; §12).
+4. **Definicion de evento no robusta a la resolucion** (13.7).
+5. **Pesos binary** no adoptados en `selection.py` y solo probados contra los
+   señuelos sinteticos de §12.
+6. **Video de alta resolucion real sin probar**: casi todo el dataset es
+   <=384 px de ancho (13.4).
+7. **`dataset/` es local (git-ignored)**: los resultados solo se reproducen con
+   la misma disposicion de carpetas (13.1); las imagenes de resultados si estan
+   versionadas.

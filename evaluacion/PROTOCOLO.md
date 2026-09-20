@@ -1,7 +1,12 @@
 # Protocolo — Estudio comparativo de métodos clásicos de keyframes/resumen
 ## (Opción C: la contribución es la evidencia, no el mecanismo)
 
-**Fecha:** 8 de septiembre de 2026
+**Fecha:** 8 de septiembre de 2026 · **Última actualización:** 20 de septiembre de 2026 (§7-§8)
+
+> **Alcance (20 sep).** Las §1-§6 son el protocolo original (Opción C, sintético
+> más `vtest.avi`) y se conservan. Después se añadieron: experimentos sintéticos
+> sobre el backend `blobtrack` (§7) y una evaluación sobre un dataset real local
+> (§8). Los resultados están en `RESULTADOS.md` y `docs/ESTADO.md` §10-§13.
 
 ## 1. Pregunta de investigación
 
@@ -73,6 +78,8 @@ del informe de resultados.
 - **Vídeo real (cualitativo, sin ground truth)**: `vtest.avi` (OpenCV,
   repositorio público, 768×576, 795 frames, peatones, cámara fija). Sirve
   para observar comportamiento en ruido e iluminación reales, no para F1.
+- **Dataset real local (ventanas aproximadas)**: 14 carpetas de PNG
+  consecutivos, no versionadas; ver §8. No es ground truth preciso.
 
 ## 5. Qué contaría como resultado interesante
 
@@ -96,4 +103,102 @@ del informe de resultados.
   donde el backend GMM debería tener ventaja (persistencia genuina), no solo trampas.
 - Sin datos reales con ground truth, el recall/precisión son solo sobre
   sintético. El resultado cualitativo en `vtest.avi` no sustituye esto.
+  *(Actualización: el dataset local de §8 aporta ventanas de evento reales,
+  pero aproximadas; no equivale a ground truth por frame.)*
 - La reimplementación de Jacobs–Pless es una aproximación no validada.
+
+## 7. Experimentos sintéticos posteriores (backend `blobtrack`)
+
+Estos experimentos miden decisiones sobre el camino por defecto (`blobtrack`)
+y no forman parte de la comparación de la §2. Se corren con
+`python -m evaluacion.benchmark` desde la raíz del repo.
+
+### 7.1 Escenarios (`evaluacion/harness.py`, `benchmark.SCENARIOS`)
+
+| escenario | generador | contenido |
+|---|---|---|
+| `trap` | `generate_trap_video` | la suite de señuelos de la §4 |
+| `scale_contrast` | `generate_scale_contrast_video` | un evento real pequeño y corto (cuadrado estático, 40 frames) frente a uno grande y largo (círculo en movimiento continuo, 160 frames), más un destello global como señuelo |
+| `scale_contrast_decoys` | `generate_scale_contrast_video(gate_passing_decoys=True)` | lo anterior más dos señuelos que **sí** pasan los gates de `blobtrack` (score > 0): `mota_pequena_transitoria` (32 frames) y `parche_de_luz_grande` (24 frames) |
+
+Motivo de `scale_contrast`: en `trap` los eventos reales tienen tamaño parecido,
+así que el sesgo de escala del score de `blobtrack` (área × edad) y de
+`select_submodular` (pondera la cobertura por score) es invisible. Los señuelos
+de `trap` tienen score exactamente 0, por lo que tampoco exponen el riesgo de
+descartar la magnitud del score. El escenario se escribe en coordenadas de
+referencia 320×240 y escala a cualquier (W, H).
+
+### 7.2 Experimentos (`--experiment`)
+
+| comando | qué varía | qué mide |
+|---|---|---|
+| `--experiment weighting` | escenario × ponderación del score {`identity`, `binary`} × presupuesto {3, 5, 8} × config {`baseline`, `aggressive`} | si descartar la magnitud del score (`binary`: score > 0) rescata el evento pequeño sin subir la captura de señuelos (`benchmark.apply_weighting`) |
+| `--experiment resolution` | `trap` (320×240 nativo) y `scale_contrast_hd` (1280×720 con señuelos que pasan los gates) × tamaño de resize {180×320, 270×480, 360×640, 540×960} × ponderación × presupuesto × config | efecto del tamaño de resize sobre recall, señuelos y fps |
+
+El tracker corre una vez por (video, config[, tamaño]); ponderación y
+presupuesto solo repiten la selección. Las métricas son las de la §3
+(recall de eventos reales y señuelos capturados) más fps; el fps incluye
+decode y es ruidoso. Resultados: `docs/ESTADO.md` §12.
+
+## 8. Protocolo con datos reales (dataset local)
+
+### 8.1 Datos
+
+`dataset/` en la raíz del repo: 14 carpetas de PNG consecutivos
+(`dataset/<Carpeta>/<Carpeta>_NNNNNN.png`; en `Candela_m1_10` los archivos son
+`Candela_m1.10_NNNNNN.png`) y `dataset/analisis-frames.md` (descripción de
+eventos y cantidad esperada de keyframes). **Está en `.gitignore` (~622 MB):
+son datos locales, no versionados**; el protocolo solo se reproduce con esa
+misma disposición de carpetas.
+
+`evaluacion/dataset_esperado.json` fija, por carpeta, el rango
+`keys_esperados` (del md) y las ventanas de evento (rangos inclusivos de
+frames, base 0). 9 carpetas tienen ventanas (31 en total); Foliage, Snellen,
+HighwayI, HighwayII y Toscana solo tienen el rango de cantidad. **Las ventanas
+se fijaron por inspección visual de los frames antes de correr el algoritmo.**
+
+### 8.2 Método y presupuesto
+
+Se corre el camino por defecto de la librería: `extract_keyframes` con
+`blobtrack`, gris + motion gate, 180×320, `submodular`, pesos `identity`.
+Presupuesto por carpeta = extremo superior de `keys_esperados` (mínimo 1).
+Comparaciones sobre las mismas 9 carpetas: 360×640, nativo sin ampliar, muestreo
+uniforme y un selector por evento (experimento fuera del repo; `ESTADO.md` §13.7).
+
+### 8.3 Métricas
+
+(`visualizar_dataset.clasificar`)
+
+- **Acierto**: una ventana con ≥ 1 keyframe.
+- **Extra**: keyframe fuera de toda ventana.
+- **Redundante**: segundo keyframe dentro de una ventana ya cubierta.
+- Carpetas sin ventanas: solo se compara la cantidad con el rango esperado.
+
+Como el md da frames aproximados, las ventanas son anchas y el recall casi no
+discrimina; extras y redundancia sí.
+
+### 8.4 Cómo correrlo
+
+```bash
+pip install matplotlib   # no es un extra declarado
+python -m evaluacion.visualizar_dataset [--only NOMBRE ...] [--budget N] [--out DIR]
+python -m evaluacion.graficar_dataset   [--only NOMBRE ...] [--budget N] [--out DIR]
+```
+
+Cada carpeta se ensambla en un video temporal sin pérdida (FFV1; MJPG si el
+writer no abre) y se borra al terminar. Salidas: tablas por frame en
+`evaluacion/resultados_dataset/` y gráficas x-y en
+`evaluacion/resultados_grafica/` (una imagen por carpeta más `resumen.png`).
+Estas imágenes sí están versionadas y se regeneran con esos comandos.
+
+### 8.5 Amenazas a la validez
+
+- Ventanas anchas y aproximadas; hay discrepancias entre el md y los frames
+  (`ESTADO.md` §13.2).
+- Casi todas las fuentes miden ≤ 384 px de ancho: no hay video de alta
+  resolución real.
+- Foliage y PeopleAndFoliage tienen cámara móvil, lo que viola el supuesto de
+  cámara fija.
+- El default (180, 320) se ratificó con estos mismos datos, así que la
+  comparación de configuraciones no es un holdout.
+- Diferencias de 3-4 ventanas sobre 31: no concluyente.
