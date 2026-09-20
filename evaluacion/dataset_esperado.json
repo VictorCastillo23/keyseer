@@ -1,0 +1,101 @@
+{
+  "_nota": "Las ventanas se fijaron por inspeccion visual de los frames ANTES de correr el algoritmo; los rangos de cantidad de keyframes (keys_esperados) vienen de dataset/analisis-frames.md. Rangos inclusivos de numeros de frame (base 0).",
+  "carpetas": {
+    "Board": {
+      "keys_esperados": [3, 4],
+      "ventanas": [
+        {"nombre": "dialogo_inicial", "inicio": 0, "fin": 55},
+        {"nombre": "escritura_pizarra", "inicio": 60, "fin": 150},
+        {"nombre": "retorno_dialogo", "inicio": 160, "fin": 227}
+      ]
+    },
+    "Candela_m1_10": {
+      "keys_esperados": [3, 4],
+      "ventanas": [
+        {"nombre": "bolsa_entrega", "inicio": 40, "fin": 80},
+        {"nombre": "sentado_representativo", "inicio": 100, "fin": 275},
+        {"nombre": "bolsa_abandonada_final", "inicio": 325, "fin": 349}
+      ]
+    },
+    "CAVIAR1": {
+      "keys_esperados": [4, 6],
+      "ventanas": [
+        {"nombre": "hombre_entra_y_avanza", "inicio": 0, "fin": 120},
+        {"nombre": "mujer_entra", "inicio": 295, "fin": 360},
+        {"nombre": "cruce_de_sujetos", "inicio": 360, "fin": 520},
+        {"nombre": "relevo_final", "inicio": 530, "fin": 609}
+      ]
+    },
+    "CAVIAR2": {
+      "keys_esperados": [3, 4],
+      "ventanas": [
+        {"nombre": "primeros_peatones", "inicio": 45, "fin": 150},
+        {"nombre": "grupo_en_vitrina", "inicio": 190, "fin": 270},
+        {"nombre": "dispersion", "inicio": 300, "fin": 459}
+      ]
+    },
+    "CaVignal": {
+      "keys_esperados": [2, 2],
+      "ventanas": [
+        {"nombre": "pose_inicial", "inicio": 0, "fin": 130},
+        {"nombre": "posicion_final", "inicio": 230, "fin": 257}
+      ]
+    },
+    "Foliage": {
+      "keys_esperados": [0, 1],
+      "ventanas": []
+    },
+    "HallAndMonitor": {
+      "keys_esperados": [4, 5],
+      "ventanas": [
+        {"nombre": "hombre1_entra", "inicio": 15, "fin": 75},
+        {"nombre": "caja_y_hombre2", "inicio": 90, "fin": 150},
+        {"nombre": "cruce_central", "inicio": 175, "fin": 225},
+        {"nombre": "salida_lateral", "inicio": 265, "fin": 295}
+      ]
+    },
+    "HighwayI": {
+      "keys_esperados": [4, 6],
+      "ventanas": []
+    },
+    "HighwayII": {
+      "keys_esperados": [4, 6],
+      "ventanas": []
+    },
+    "HumanBody2": {
+      "keys_esperados": [5, 7],
+      "ventanas": [
+        {"nombre": "posiciones_iniciales", "inicio": 0, "fin": 120},
+        {"nombre": "reconfiguracion", "inicio": 150, "fin": 250},
+        {"nombre": "cruce_central", "inicio": 330, "fin": 420},
+        {"nombre": "triple_coincidencia", "inicio": 520, "fin": 600},
+        {"nombre": "cierre", "inicio": 690, "fin": 739}
+      ]
+    },
+    "IBMtest2": {
+      "keys_esperados": [2, 3],
+      "ventanas": [
+        {"nombre": "primer_hombre", "inicio": 0, "fin": 35},
+        {"nombre": "dos_en_cuadro", "inicio": 36, "fin": 60},
+        {"nombre": "relevo_mujer", "inicio": 65, "fin": 89}
+      ]
+    },
+    "PeopleAndFoliage": {
+      "keys_esperados": [3, 4],
+      "ventanas": [
+        {"nombre": "conversacion_inicio", "inicio": 50, "fin": 100},
+        {"nombre": "charla_oclusion", "inicio": 120, "fin": 210},
+        {"nombre": "despedida", "inicio": 240, "fin": 300},
+        {"nombre": "salida_y_auto_solo", "inicio": 315, "fin": 340}
+      ]
+    },
+    "Snellen": {
+      "keys_esperados": [1, 2],
+      "ventanas": []
+    },
+    "Toscana": {
+      "keys_esperados": [2, 3],
+      "ventanas": []
+    }
+  }
+}
